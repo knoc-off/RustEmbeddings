@@ -1,34 +1,51 @@
-use crossbeam::channel::{unbounded, Sender};
-use std::{thread, time::Duration};
+use bincode::{deserialize, serialize};
+use shared_memory::*;
+use std::fs::File;
+use std::io::Read;
+
+use evdata::SharedQueue;
+
+fn create_or_open_shared_memory( flink :&str ) -> Result<Shmem, ShmemError> {
+    // Create or open the shared memory mapping
+    let shmem = match ShmemConf::new().size(8192).flink(flink).create() {
+        Ok(m) => m,
+        Err(ShmemError::LinkExists) => ShmemConf::new().flink(flink).open().unwrap(),
+        Err(e) => {
+            eprintln!("Unable to create or open shmem flink {flink} : {e}");
+            return Err(e);
+        }
+    };
+
+    Ok(shmem)
+}
 
 fn main() {
-    // Setup for simulated shared memory communication (using channels in this example)
-    let (response_tx, _): (Sender<i32>, _) = unbounded();
+    // socket connection
+    //let comms = "/tmp/rust-uds.sock";
+    //use std::os::unix::net::UnixStream;
 
-    // Simulate setup for listening to server commands
-    // In a real implementation, you would connect to a shared memory segment here
+    let shmem = create_or_open_shared_memory("memory_mapping").unwrap();
+    //ShmemConf::new()
+    //    .os_id(&id)
+    //    .open()
+    //    .expect("Failed to open shared memory");
 
-    loop {
-        // Simulate waiting for and receiving a command from the server
-        // In a real implementation, this would involve waiting for a signal and reading from shared memory
+    println!("Connected to shared memory with id: {}", shmem.get_os_id());
 
-        // For demonstration, pretend we received a command after a delay
-        thread::sleep(Duration::from_secs(1)); // Simulate delay waiting for a command
-        println!("Client received command");
 
-        // Process the command
-        // Decision logic for the response can go here. For simplicity, we always respond with 1
-        let response = 1; // Simulate decision based on the received command
+    unsafe {
+        let data_slice = std::slice::from_raw_parts(shmem.as_ptr(), shmem.len());
+        if let Ok(mut shared_queue) = deserialize::<SharedQueue>(data_slice) {
+            shared_queue.queue.push("Hello from client!".to_string());
 
-        // Respond to server
-        // In a real implementation, this would involve writing to a specific shared memory location or using a communication channel
-        response_tx.send(response).expect("Failed to send response");
-
-        // Optionally, add something to the shared queue for the server's listener thread
-        // This would involve writing to a different segment of shared memory or using another channel
-        // For simplicity, this step is omitted in the example
-
-        println!("Client sent response: {}", response);
+            let serialized = serialize(&shared_queue).unwrap();
+            if serialized.len() > shmem.len() {
+                panic!("Shared memory is not large enough to hold the updated data.");
+            }
+            std::ptr::copy_nonoverlapping(serialized.as_ptr(), shmem.as_ptr() as *mut u8, serialized.len());
+        } else {
+            println!("Failed to deserialize shared queue.");
+        }
     }
 }
 
