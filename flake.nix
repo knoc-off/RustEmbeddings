@@ -22,6 +22,7 @@
             lua5_4_compat
             openssl
             pkg-config
+            sqlite
             (
               rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
                 extensions = [
